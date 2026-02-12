@@ -1,59 +1,67 @@
 import streamlit as st
+import google.generativeai as genai
+import os
 
-# --- KNOWLEDGE BASE ---
-INSURANCE_KNOWLEDGE = {
-    "ncb": {
-        "answer": "No Claim Bonus (NCB) is a discount on your renewal premium for not making a claim.",
-        "details": "In India, it starts at 20% for the 1st year and goes up to 50% for the 5th year. It belongs to the owner, not the car!"
-    },
-    "idv": {
-        "answer": "IDV (Insured Declared Value) is the maximum sum insured by the company.",
-        "details": "It is basically the market value of your vehicle. If your car is stolen or totaled, this is the amount you get."
-    }
-}
+# --- 1. SETUP & AUTHENTICATION ---
+# Securely fetch the API key from st.secrets or environment variables
+api_key = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
-def get_contextual_response(user_input, history):
-    user_input = user_input.lower()
-    
-    # 1. Check if user is asking a follow-up like "Tell me more" or "How much?"
-    if any(word in user_input for word in ["more", "detail", "how much", "elaborate"]):
-        if history:
-            last_topic = history[-2]["content"].lower() # Check the last bot response
-            for key in INSURANCE_KNOWLEDGE:
-                if key in last_topic:
-                    return INSURANCE_KNOWLEDGE[key]["details"]
-        return "Could you specify what you'd like more details on? (e.g., NCB or IDV)"
+if not api_key:
+    st.error("Missing Google API Key. Please add it to your Streamlit Secrets or environment.")
+    st.stop()
 
-    # 2. Standard Keyword Search
-    for key, data in INSURANCE_KNOWLEDGE.items():
-        if key in user_input:
-            return data["answer"]
-            
-    return "I'm not sure about that. Try asking about NCB, IDV, or Third-party insurance."
+genai.configure(api_key=api_key)
 
-# --- STREAMLIT UI ---
-st.title("🚗 VahanBima Smart Bot")
+# --- 2. THE VAHANBIMA BRAIN (System Instruction) ---
+# This prompt forces the "real-life" continuous questioning behavior.
+SYSTEM_INSTRUCTION = """
+You are 'VahanBima AI', a specialized assistant for Indian vehicle insurance.
+CONTEXT:
+- Use terms like 'IDV', 'NCB (No Claim Bonus)', 'Zero-Dep', 'Third-Party Mandatory', 'RC', 'Challan', and 'PUC'.
+- Reference the 'Motor Vehicles Act 1988' and 'IRDAI' guidelines.
+- Be professional but empathetic, as insurance often involves accidents or claims.
 
-# Initialize Session State for Memory
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+BEHAVIOR:
+1. Short & Clear: Keep answers concise (2-3 paragraphs max).
+2. Continuous Flow: After answering a user's question, ALWAYS suggest a logical follow-up question or ask a clarifying question about their vehicle (e.g., 'Is your car more than 5 years old?').
+3. No Hallucination: If unsure about a specific premium amount, explain that it depends on the make, model, and RTO.
+"""
 
-# Display entire conversation from session_state
-for message in st.session_state.chat_history:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+model = genai.GenerativeModel(
+    model_name="gemini-1.5-flash",
+    system_instruction=SYSTEM_INSTRUCTION
+)
 
-# Chat Input
-if prompt := st.chat_input("Ask me something..."):
-    # Add user message to history
-    st.session_state.chat_history.append({"role": "user", "content": prompt})
+# --- 3. STREAMLIT UI ---
+st.set_page_config(page_title="VahanBima AI", page_icon="🛡️")
+st.title("🛡️ VahanBima AI Assistant")
+st.markdown("Expert guidance on Indian Car & Bike Insurance.")
+
+# Initialize chat history for the session
+if "chat_session" not in st.session_state:
+    # Start a fresh chat object from Gemini
+    st.session_state.chat_session = model.start_chat(history=[])
+
+# Display history
+for message in st.session_state.chat_session.history:
+    with st.chat_message("user" if message.role == "user" else "assistant"):
+        st.markdown(message.parts[0].text)
+
+# --- 4. THE CHAT LOOP ---
+if prompt := st.chat_input("Ask about NCB, Zero-Dep, or Claim process..."):
+    # Display user input
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Generate response using history for context
-    response = get_contextual_response(prompt, st.session_state.chat_history)
-
-    # Add assistant response to history
-    st.session_state.chat_history.append({"role": "assistant", "content": response})
+    # Generate and display assistant response
     with st.chat_message("assistant"):
-        st.markdown(response)
+        response_container = st.empty()
+        full_response = ""
+        
+        # Send message to Gemini chat session (persists history automatically)
+        response = st.session_state.chat_session.send_message(prompt, stream=True)
+        
+        for chunk in response:
+            full_response += chunk.text
+            response_container.markdown(full_response + "▌")
+        response_container.markdown(full_response)
