@@ -29,7 +29,7 @@ STRICT RULES:
 
 # Initialize Gemini 2.0 Flash
 model = genai.GenerativeModel(
-    model_name="gemini-2.0-flash", # Updated for Feb 2026
+    model_name="gemini-2.5-flash", # Updated for Feb 2026
     system_instruction=SYSTEM_PROMPT
 )
 
